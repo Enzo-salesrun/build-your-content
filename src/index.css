@@ -1,0 +1,125 @@
+@import "tailwindcss";
+
+/* Modern Fonts - Agenforce Style */
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+  /* Fonts */
+  --font-heading: 'Manrope', system-ui, -apple-system, sans-serif;
+  --font-body: 'Inter', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', monospace;
+
+  /* Colors - Ultra Modern Minimal */
+  --background: 255 255 255;
+  --foreground: 10 10 10;
+  
+  /* Primary (Soft Violet/Indigo) */
+  --primary: 139 92 246;
+  --primary-hover: 124 58 237;
+  --primary-light: 243 232 255;
+  --primary-muted: 237 233 254;
+  
+  /* Accent (Soft Indigo) */
+  --accent: 224 231 255;
+  --accent-hover: 199 210 254;
+  
+  /* Surface */
+  --surface: 250 250 250;
+  --surface-elevated: 255 255 255;
+  
+  /* Border */
+  --border: 229 231 235;
+  --border-hover: 209 213 219;
+  
+  /* Muted */
+  --muted: 107 114 128;
+  --muted-foreground: 156 163 175;
+  
+  /* Status */
+  --success: 34 197 94;
+  --error: 239 68 68;
+  --warning: 245 158 11;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  background-color: rgb(var(--background));
+  color: rgb(var(--foreground));
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.01em;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+
+h1 {
+  font-size: 2.5rem;
+  line-height: 1.1;
+}
+
+h2 {
+  font-size: 1.875rem;
+  line-height: 1.2;
+}
+
+h3 {
+  font-size: 1.25rem;
+  line-height: 1.3;
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Ultra minimal scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--border));
+  border-radius: 100px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--muted-foreground));
+}
+
+/* Selection */
+::selection {
+  background: rgb(var(--primary-light));
+  color: rgb(var(--foreground));
+}
+
+/* Focus ring - modern style */
+:focus-visible {
+  outline: 2px solid rgb(var(--primary));
+  outline-offset: 2px;
+}
+
+/* Smooth transitions globally - exclude transform to avoid animation glitches on modals/dropdowns */
+*, *::before, *::after {
+  transition-property: color, background-color, border-color, box-shadow, opacity;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}

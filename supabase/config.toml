@@ -1,0 +1,31 @@
+# Supabase Edge Functions Configuration
+# See: https://supabase.com/docs/guides/cli/config
+
+# Internal tool: skip JWT verification at Supabase level
+# Auth is still checked in function code (just checks header exists)
+[functions.unipile-auth]
+verify_jwt = false
+
+# unipile-callback receives webhooks from external Unipile servers
+[functions.unipile-callback]
+verify_jwt = false
+
+# publish-post: internal tool for publishing to LinkedIn
+[functions.publish-post]
+verify_jwt = false
+
+# publish-scheduled: called by cron scheduler (uses secret header)
+[functions.publish-scheduled]
+verify_jwt = false
+
+# ai-assistant: internal AI chat assistant
+[functions.ai-assistant]
+verify_jwt = false
+
+# generate-hooks-batch: AI hooks generation
+[functions.generate-hooks-batch]
+verify_jwt = false
+
+# generate-body: AI body generation
+[functions.generate-body]
+verify_jwt = false

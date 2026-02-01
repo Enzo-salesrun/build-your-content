@@ -1,0 +1,2 @@
+# Disable JWT verification - called by cron job
+verify_jwt = false
