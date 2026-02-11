@@ -365,6 +365,21 @@ export function StepEditor({ state, updateState, setAiStatus, setAiMessage }: St
     updateState({ authors: updatedAuthors })
   }
 
+  // Update first comment for a specific slot
+  const updateSlotFirstComment = (authorId: string, audienceId: string, comment: string) => {
+    const updatedAuthors = state.authors.map(author => {
+      if (author.id !== authorId) return author
+      return {
+        ...author,
+        audiences: author.audiences.map(slot => {
+          if (slot.audienceId !== audienceId) return slot
+          return { ...slot, firstComment: comment }
+        }),
+      }
+    })
+    updateState({ authors: updatedAuthors })
+  }
+
   // Update media mode for a specific slot
   const updateSlotMediaMode = (authorId: string, audienceId: string, mode: 'default' | 'custom' | 'none', customUrl?: string | null) => {
     const updatedAuthors = state.authors.map(author => {
@@ -770,6 +785,27 @@ export function StepEditor({ state, updateState, setAiStatus, setAiMessage }: St
                       </div>
                     </div>
 
+
+                    {/* First Comment (auto-comment under post) */}
+                    <div className="bg-white border border-neutral-200 rounded-xl p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <AtSign className="h-4 w-4 text-neutral-400" />
+                          <span className="text-sm font-medium text-neutral-700">Premier commentaire</span>
+                          <span className="text-[10px] text-neutral-400 bg-neutral-100 px-1.5 py-0.5 rounded">Optionnel</span>
+                        </div>
+                      </div>
+                      <Textarea
+                        value={activeSlot.slot.firstComment}
+                        onChange={(e) => updateSlotFirstComment(activeSlot.authorId, activeSlot.audienceId, e.target.value)}
+                        placeholder="Ex: Envie d'en discuter ? Réservez un créneau ici → https://calendly.com/..."
+                        className="min-h-[60px] text-sm resize-none border-0 p-0 focus-visible:ring-0"
+                        rows={2}
+                      />
+                      <p className="text-[11px] text-neutral-400 mt-2">
+                        Sera posté automatiquement en commentaire sous votre post (lien agenda, ressource, etc.)
+                      </p>
+                    </div>
 
                     {/* AI Refinement Controls */}
                     <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-4">

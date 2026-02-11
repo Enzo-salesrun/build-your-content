@@ -31,15 +31,34 @@ interface EngagementResult {
   comment_success: boolean
   comment_text?: string
   comment_error?: string
+  comment_pattern_id?: number
+  comment_pattern_name?: string
 }
 
-// Configuration
+interface CommentPattern {
+  pattern_id: number
+  pattern_name: string
+  prompt_instructions: string
+  length_min: number
+  length_max: number
+  asks_question: boolean
+  examples: string[]
+}
+
+// Configuration - Délais réalistes pour mimer un comportement humain
 const CONFIG = {
-  MIN_DELAY_MS: 10_000,      // 10 seconds minimum between engagements
-  MAX_DELAY_MS: 45_000,      // 45 seconds max (avoid Edge Function timeout)
-  COMMENT_MIN_LENGTH: 10,
-  COMMENT_MAX_LENGTH: 300,
-  ENABLED: true,
+  // Délai entre chaque engager (stagger pour éviter détection)
+  MIN_DELAY_BETWEEN_ENGAGERS_MS: 30_000,   // 30 secondes minimum
+  MAX_DELAY_BETWEEN_ENGAGERS_MS: 120_000,  // 2 minutes maximum
+  
+  // Délai entre la réaction et le commentaire d'un même engager
+  MIN_DELAY_REACTION_TO_COMMENT_MS: 8_000,  // 8 secondes (temps de "lire" le post)
+  MAX_DELAY_REACTION_TO_COMMENT_MS: 25_000, // 25 secondes (réflexion avant commentaire)
+  
+  // Anti-répétition des patterns
+  PATTERN_EXCLUDE_COUNT: 10,
+  
+  ENABLED: false, // DEPRECATED - disabled due to LinkedIn shadowban risk
 }
 
 // Types de réactions possibles pour variété
@@ -107,6 +126,16 @@ serve(async (req) => {
 
     console.log(`[auto-engage] Starting engagement for post ${external_post_id}${test_mode ? ' (TEST MODE)' : ''}`)
 
+    // Get post author's name for context
+    const { data: postAuthor } = await supabase
+      .from('profiles')
+      .select('full_name, first_name')
+      .eq('id', post_author_profile_id)
+      .single()
+    
+    const postAuthorName = postAuthor?.first_name || postAuthor?.full_name || 'un collègue'
+    console.log(`[auto-engage] Post author: ${postAuthorName}`)
+
     let engagers: EligibleEngager[] = []
     
     if (test_mode) {
@@ -170,8 +199,8 @@ serve(async (req) => {
     for (let i = 0; i < engagers.length; i++) {
       const engager = engagers[i] as EligibleEngager
       
-      // Calculate random delay for this engagement
-      const delay = CONFIG.MIN_DELAY_MS + Math.random() * (CONFIG.MAX_DELAY_MS - CONFIG.MIN_DELAY_MS)
+      // Calculate random delay for this engagement (comportement humain)
+      const delay = CONFIG.MIN_DELAY_BETWEEN_ENGAGERS_MS + Math.random() * (CONFIG.MAX_DELAY_BETWEEN_ENGAGERS_MS - CONFIG.MIN_DELAY_BETWEEN_ENGAGERS_MS)
       
       console.log(`[auto-engage] Processing ${engager.profile_name} (delay: ${Math.round(delay/1000)}s)`)
 
@@ -272,18 +301,35 @@ serve(async (req) => {
           }
         }
 
-        // Small delay between reaction and comment
-        await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 3000))
+        // Délai réaliste entre réaction et commentaire (temps de "lire" et "réfléchir")
+        const reactionToCommentDelay = CONFIG.MIN_DELAY_REACTION_TO_COMMENT_MS + 
+          Math.random() * (CONFIG.MAX_DELAY_REACTION_TO_COMMENT_MS - CONFIG.MIN_DELAY_REACTION_TO_COMMENT_MS)
+        console.log(`[auto-engage] Waiting ${Math.round(reactionToCommentDelay/1000)}s before commenting...`)
+        await new Promise(resolve => setTimeout(resolve, reactionToCommentDelay))
 
         // 2. Generate and post comment
         if (canComment) {
           try {
-            // Generate personalized comment using GPT-5.2
-            const commentText = await generateComment(
+            // Select a comment pattern with rotation
+            const { data: patternData } = await supabase.rpc('select_comment_pattern', {
+              p_engager_profile_id: engager.profile_id,
+              p_exclude_count: CONFIG.PATTERN_EXCLUDE_COUNT,
+            })
+            
+            const pattern: CommentPattern | null = patternData?.[0] || null
+            
+            if (!pattern) {
+              console.warn(`[auto-engage] No pattern available for ${engager.profile_name}`)
+            }
+            
+            // Generate personalized comment using the selected pattern
+            const commentText = await generateCommentWithPattern(
               openaiApiKey,
               post_content,
               engager.profile_name,
-              engager.writing_style
+              engager.writing_style,
+              pattern,
+              postAuthorName
             )
 
             if (commentText) {
@@ -305,19 +351,22 @@ serve(async (req) => {
                 const commentResult = await commentResponse.json()
                 result.comment_success = true
                 result.comment_text = commentText
+                result.comment_pattern_id = pattern?.pattern_id
+                result.comment_pattern_name = pattern?.pattern_name
                 await supabase.rpc('increment_engagement_counter', {
                   p_profile_id: engager.profile_id,
                   p_action_type: 'comment',
                 })
-                console.log(`[auto-engage] ✓ Comment by ${engager.profile_name}: "${commentText}"`)
+                console.log(`[auto-engage] ✓ Comment by ${engager.profile_name} [${pattern?.pattern_name || 'no-pattern'}]: "${commentText}"`)
 
-                // Update log with comment result
+                // Update log with comment result and pattern
                 await supabase
                   .from('engagement_logs')
                   .update({
                     comment_text: commentText,
                     comment_id: commentResult.comment_id,
                     comment_success: true,
+                    comment_pattern_id: pattern?.pattern_id || null,
                   })
                   .eq('id', logId)
               } else {
@@ -410,47 +459,68 @@ serve(async (req) => {
 })
 
 /**
- * Generate a personalized comment using GPT-5.2
+ * Generate a personalized comment using a specific pattern
+ * Uses the pattern's instructions, length constraints, and examples for guidance
  */
-async function generateComment(
+async function generateCommentWithPattern(
   apiKey: string,
   postContent: string,
   commenterName: string,
-  writingStyle: string | null
+  writingStyle: string | null,
+  pattern: CommentPattern | null,
+  postAuthorName: string
 ): Promise<string | null> {
   try {
-    const systemPrompt = `Tu génères des commentaires LinkedIn authentiques et construits.
+    // Default values if no pattern
+    const lengthMin = pattern?.length_min || 30
+    const lengthMax = pattern?.length_max || 80
+    const patternInstructions = pattern?.prompt_instructions || 'Écris un commentaire naturel et humain.'
+    const examples = pattern?.examples || []
+    
+    const systemPrompt = `Tu génères des commentaires LinkedIn INDÉTECTABLES comme écrits par une IA.
 
-TON APPROCHE:
-- Apporte une vraie réflexion ou un angle nouveau sur le sujet
-- Partage une expérience concrète, une nuance, ou pose une question pertinente
-- Écris comme un humain qui a vraiment lu et réfléchi au post
-- Sois direct, pas de flatterie vide ("Super post !", "Bravo !", "Tellement vrai !")
+🎯 OBJECTIF: Écrire comme un VRAI humain qui commente spontanément.
 
-CE QUI EST INTERDIT:
-- Les formules creuses de LinkedIn bullshit
-- Les emojis excessifs (0-1 max, et seulement si naturel)
-- Les hashtags
-- Le ton corporate/marketing
-- Commencer par "Je" ou par une validation ("Je suis d'accord", "Tu as raison")
-- Les tirets (-), underscores (_), tirets longs (—) ou tout autre caractère de séparation
+� CONTEXTE IMPORTANT:
+${commenterName} et ${postAuthorName} sont COLLÈGUES dans la même entreprise.
+Ils se connaissent, se tutoient, et ont une relation professionnelle amicale.
+Tu commentes le post d'un collègue/ami, PAS d'un inconnu.
 
-FORMAT:
-- Entre ${CONFIG.COMMENT_MIN_LENGTH} et ${CONFIG.COMMENT_MAX_LENGTH} caractères
-- Une seule phrase construite, ou deux courtes maximum
-- Ton conversationnel, comme si tu parlais à un collègue
+�📋 INSTRUCTIONS SPÉCIFIQUES DU PATTERN:
+${patternInstructions}
 
-${writingStyle ? `STYLE D'ÉCRITURE DE ${commenterName}:\n${writingStyle}\n\n→ Adapte le ton et le vocabulaire à ce style.` : ''}
+${examples.length > 0 ? `📝 EXEMPLES DE CE STYLE:
+${examples.map(ex => `- "${ex}"`).join('\n')}` : ''}
 
-Retourne UNIQUEMENT le commentaire brut. Pas de guillemets, pas d'explication.`
+🚫 INTERDIT (ça trahit l'IA):
+- Structures trop parfaites ou numérotées
+- "Merci pour ce partage", "Excellent post", "Tellement vrai"
+- Ton distant ou formel (vous, monsieur, etc.)
+- Commencer par "Je suis d'accord" ou "Tu as raison"
+- Plus d'un emoji
+- Hashtags
+- Tirets ou caractères spéciaux de séparation
 
-    const userPrompt = `Commente ce post LinkedIn de façon réfléchie et humaine:
+✅ COMMENT ÊTRE HUMAIN (collègue):
+- Tutoiement obligatoire
+- Ton décontracté, comme entre potes au bureau
+- Peut faire référence à des conversations passées ou projets communs
+- Réagir à UN point précis, pas au post entier
+- Être spécifique et direct
 
----
-${postContent.substring(0, 600)}
----
+📏 LONGUEUR: Entre ${lengthMin} et ${lengthMax} caractères. PAS PLUS.
 
-Commentateur: ${commenterName}`
+${writingStyle ? `🎨 STYLE DE ${commenterName}:\n${writingStyle}\n\n→ Adapte subtilement le vocabulaire à ce style.` : ''}
+
+Retourne UNIQUEMENT le commentaire. Rien d'autre.`
+
+    const userPrompt = `Post LinkedIn à commenter:
+
+"""
+${postContent.substring(0, 500)}
+"""
+
+Génère UN commentaire dans le style demandé (${lengthMin}-${lengthMax} caractères).`
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -459,19 +529,19 @@ Commentateur: ${commenterName}`
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-5.2',
+        model: 'gpt-4o',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
-        max_completion_tokens: 100,
-        temperature: 0.9, // Higher temperature for more variety
+        max_tokens: 150,
+        temperature: 0.95, // High temperature for natural variety
       }),
     })
 
     if (!response.ok) {
       const error = await response.json()
-      console.error('[generateComment] OpenAI error:', error)
+      console.error('[generateCommentWithPattern] OpenAI error:', error)
       return null
     }
 
@@ -483,18 +553,23 @@ Commentateur: ${commenterName}`
     // Clean up the comment
     comment = comment.replace(/^["']|["']$/g, '') // Remove surrounding quotes
     comment = comment.replace(/^Commentaire:\s*/i, '') // Remove any prefix
+    comment = comment.replace(/^[-–—]\s*/, '') // Remove leading dashes
     
-    // Validate length
-    if (comment.length < CONFIG.COMMENT_MIN_LENGTH || comment.length > CONFIG.COMMENT_MAX_LENGTH) {
-      console.log(`[generateComment] Comment length out of bounds (${comment.length}), truncating/padding`)
-      if (comment.length > CONFIG.COMMENT_MAX_LENGTH) {
-        comment = comment.substring(0, CONFIG.COMMENT_MAX_LENGTH - 3) + '...'
+    // Validate and adjust length
+    if (comment.length > lengthMax + 20) {
+      // Find a natural break point
+      const cutPoint = comment.lastIndexOf('.', lengthMax)
+      if (cutPoint > lengthMin) {
+        comment = comment.substring(0, cutPoint + 1)
+      } else {
+        comment = comment.substring(0, lengthMax)
       }
     }
 
+    console.log(`[generateCommentWithPattern] Pattern: ${pattern?.pattern_name || 'default'}, Length: ${comment.length}/${lengthMax}`)
     return comment
   } catch (error) {
-    console.error('[generateComment] Error:', error)
+    console.error('[generateCommentWithPattern] Error:', error)
     return null
   }
 }

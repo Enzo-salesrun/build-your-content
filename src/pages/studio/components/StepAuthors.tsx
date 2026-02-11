@@ -34,6 +34,7 @@ const createEmptyAudienceSlot = (audienceId: string): AudienceSlot => ({
   mediaType: null,
   mediaMode: 'default',  // Default: use global default media
   mentions: [],
+  firstComment: '',
   scheduledAt: null,
   status: 'pending',
 })
@@ -304,7 +305,7 @@ RÈGLES:
         audiences: author.audiences.filter(a => a.audienceId !== audienceId),
       })
     } else {
-      // Check limits: max 2 audiences per author, max 6 combinations total
+      // Check limits: max 2 audiences per author, max 10 combinations total
       if (author.audiences.length >= 2) return
       if (currentPostsWithoutThisAuthor + author.audiences.length + 1 > MAX_POSTS_PER_BATCH) return
 
@@ -708,15 +709,15 @@ RÈGLES:
             <Tooltip>
               <TooltipTrigger asChild>
                 <Badge 
-                  variant={totalPosts >= 8 ? 'destructive' : totalPosts >= 6 ? 'secondary' : 'outline'} 
-                  className={`text-xs cursor-help ${totalPosts >= 8 ? '' : totalPosts >= 6 ? 'bg-amber-50 text-amber-700 border-amber-200' : ''}`}
+                  variant={totalPosts >= MAX_POSTS_PER_BATCH ? 'destructive' : totalPosts >= 8 ? 'secondary' : 'outline'} 
+                  className={`text-xs cursor-help ${totalPosts >= MAX_POSTS_PER_BATCH ? '' : totalPosts >= 8 ? 'bg-amber-50 text-amber-700 border-amber-200' : ''}`}
                 >
-                  {totalPosts}/8 posts
+                  {totalPosts}/{MAX_POSTS_PER_BATCH} posts
                   <Info className="h-3 w-3 ml-1" />
                 </Badge>
               </TooltipTrigger>
               <TooltipContent side="left">
-                <p className="text-xs">Posts = Auteurs × Audiences (max 8)</p>
+                <p className="text-xs">Posts = Auteurs × Audiences (max {MAX_POSTS_PER_BATCH})</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>

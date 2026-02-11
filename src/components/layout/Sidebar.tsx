@@ -85,7 +85,7 @@ const navItems: NavItem[] = [
     icon: IconUsersGroup,
     children: [
       { href: '/team', label: 'Membres', icon: IconUsersGroup },
-      { href: '/team/engagement', label: 'Engagement', icon: IconMessageCircle },
+      { href: '/team/engagement', label: 'Engagement (désactivé)', icon: IconMessageCircle },
     ],
   },
 ]

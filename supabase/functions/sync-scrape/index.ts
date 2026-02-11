@@ -51,6 +51,9 @@ serve(async (req) => {
     return new Response('ok', { headers: corsHeaders })
   }
 
+  const startTime = Date.now()
+  const MAX_EXECUTION_MS = 50000 // 50s safety margin before 60s timeout
+  
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -60,13 +63,13 @@ serve(async (req) => {
 
     // Parse request
     let profileIds: string[] = []
-    let maxPages = 5
+    let maxPages = 3 // Reduced from 5 to prevent timeouts
     let triggerProcessing = true
     
     try {
       const body = await req.json()
       profileIds = body.profile_ids || []
-      maxPages = body.max_pages || 5
+      maxPages = Math.min(body.max_pages || 3, 5) // Cap at 5 pages max
       triggerProcessing = body.trigger_processing !== false
     } catch {
       console.log('[sync-scrape] No body, using defaults')
@@ -105,6 +108,12 @@ serve(async (req) => {
     let totalNewPosts = 0
 
     for (const profile of profilesToSync) {
+      // Check if we're approaching timeout - abort gracefully
+      const elapsed = Date.now() - startTime
+      if (elapsed > MAX_EXECUTION_MS) {
+        console.log(`[sync-scrape] ⚠️ Approaching timeout (${elapsed}ms), stopping early`)
+        break
+      }
       await supabase.from('profiles').update({ sync_status: 'scraping' }).eq('id', profile.profile_id)
       
       // Fetch profile data (including avatar) if not already set

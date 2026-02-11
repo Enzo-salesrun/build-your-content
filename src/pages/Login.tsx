@@ -26,7 +26,7 @@ export function Login() {
       .select('id, email, type')
       .eq('email', emailToCheck.toLowerCase())
       .eq('type', 'internal')
-      .single()
+      .maybeSingle()
     
     return !!data
   }

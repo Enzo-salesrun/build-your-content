@@ -15,6 +15,8 @@ import {
   IconLoader2,
   IconCheck,
   IconAlertCircle,
+  IconRefresh,
+  IconClock,
 } from '@tabler/icons-react'
 import {
   Button,
@@ -44,6 +46,7 @@ interface Creator {
   avg_engagement: number | null
   posts_count: number | null
   sync_status: 'pending' | 'scraping' | 'analyzing' | 'completed' | 'error' | null
+  last_scraped_at?: string | null
 }
 
 export function Creators() {
@@ -60,6 +63,7 @@ export function Creators() {
     linkedin_id: '',
   })
   const [sortBy, setSortBy] = useState<'engagement' | 'posts' | 'name'>('engagement')
+  const [scrapingIds, setScrapingIds] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     fetchCreators()
@@ -69,14 +73,62 @@ export function Creators() {
     if (showLoading) setLoading(true)
     const { data, error } = await supabase
       .from('profiles')
-      .select('*')
+      .select(`
+        *,
+        profile_sync_status(last_scraped_at)
+      `)
       .eq('type', 'external_influencer')
       .order('avg_engagement', { ascending: false, nullsFirst: false })
 
     if (!error && data) {
-      setCreators(data as unknown as Creator[])
+      const creatorsWithSync = data.map((c: any) => ({
+        ...c,
+        last_scraped_at: c.profile_sync_status?.last_scraped_at || null,
+      }))
+      setCreators(creatorsWithSync as Creator[])
     }
     if (showLoading) setLoading(false)
+  }
+
+  async function handleScrape(e: React.MouseEvent, creatorId: string) {
+    e.stopPropagation()
+    setScrapingIds(prev => new Set(prev).add(creatorId))
+    
+    try {
+      const { error } = await supabase.functions.invoke('sync-profiles', {
+        body: {
+          profile_ids: [creatorId],
+          max_pages: 3,
+          generate_embeddings: true,
+          classify_hooks: true,
+        },
+      })
+
+      if (error) throw error
+      fetchCreators(false)
+    } catch (error) {
+      console.error('Error scraping:', error)
+      alert(`Erreur: ${(error as Error).message}`)
+    } finally {
+      setScrapingIds(prev => {
+        const next = new Set(prev)
+        next.delete(creatorId)
+        return next
+      })
+    }
+  }
+
+  function formatRelativeDate(dateStr: string | null | undefined) {
+    if (!dateStr) return 'Jamais'
+    const date = new Date(dateStr)
+    const now = new Date()
+    const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24))
+    
+    if (diffDays === 0) return "Aujourd'hui"
+    if (diffDays === 1) return 'Hier'
+    if (diffDays < 7) return `Il y a ${diffDays}j`
+    if (diffDays < 30) return `Il y a ${Math.floor(diffDays / 7)} sem.`
+    return `Il y a ${Math.floor(diffDays / 30)} mois`
   }
 
   const filteredCreators = creators
@@ -369,6 +421,12 @@ export function Creators() {
                   </div>
                 </div>
 
+                {/* Last Scraped Date */}
+                <div className="flex items-center gap-1.5 text-xs text-neutral-400 mb-3">
+                  <IconClock className="h-3 w-3" />
+                  <span>Scrapé : {formatRelativeDate(creator.last_scraped_at)}</span>
+                </div>
+
                 {/* Stats */}
                 <div className="grid grid-cols-3 gap-2 mb-4">
                   <div className="bg-neutral-50 rounded-lg p-2 text-center">
@@ -396,17 +454,25 @@ export function Creators() {
 
                 {/* Actions */}
                 <div className="flex items-center justify-between">
-                  <Link to={`/creators/${creator.id}`}>
-                    <Button variant="outline" size="sm">
-                      <IconChartBar className="h-4 w-4 mr-1" />
-                      {CREATORS_LABELS.analyzeStyle}
-                    </Button>
-                  </Link>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={(e) => handleScrape(e, creator.id)}
+                    disabled={scrapingIds.has(creator.id) || creator.sync_status === 'scraping'}
+                    className="text-violet-600 border-violet-200 hover:bg-violet-50"
+                  >
+                    {scrapingIds.has(creator.id) || creator.sync_status === 'scraping' ? (
+                      <IconLoader2 className="h-4 w-4 mr-1 animate-spin" />
+                    ) : (
+                      <IconRefresh className="h-4 w-4 mr-1" />
+                    )}
+                    Scraper
+                  </Button>
                   <div className="flex gap-1">
-                    <Button variant="outline" size="icon" className="h-8 w-8 border-neutral-200 bg-white hover:bg-neutral-50" onClick={() => openEditModal(creator)}>
+                    <Button variant="outline" size="icon" className="h-8 w-8 border-neutral-200 bg-white hover:bg-neutral-50" onClick={(e) => { e.stopPropagation(); openEditModal(creator) }}>
                       <IconPencil className="h-4 w-4 text-neutral-600" />
                     </Button>
-                    <Button variant="outline" size="icon" className="h-8 w-8 border-red-200 bg-white hover:bg-red-50" onClick={() => handleDelete(creator.id)}>
+                    <Button variant="outline" size="icon" className="h-8 w-8 border-red-200 bg-white hover:bg-red-50" onClick={(e) => { e.stopPropagation(); handleDelete(creator.id) }}>
                       <IconTrash className="h-4 w-4 text-red-500" />
                     </Button>
                   </div>

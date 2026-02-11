@@ -1,15 +1,16 @@
 /**
- * Worker V2: Classify Hooks
+ * Worker V2: Classify Hooks (BATCHED)
  * Classifies extracted hooks into categories (Question, Story, Stat, etc.)
  * Uses GPT-5-mini for cost efficiency
- * Depends on: hook extraction must be complete
+ * OPTIMIZED: Processes 10 hooks per API call to reduce costs by ~60%
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
-import { initWorker, finalizeWorker, handleWorkerError, processBatch } from '../_shared/worker-utils-v2.ts'
+import { initWorker, finalizeWorker, handleWorkerError } from '../_shared/worker-utils-v2.ts'
 import { aiService } from '../_shared/ai-service.ts'
 
 const WORKER_NAME = 'worker_classify_hooks_v2'
-const BATCH_SIZE = 50
+const BATCH_SIZE = 50        // Posts to fetch from DB
+const AI_BATCH_SIZE = 10     // Posts per AI call (cost optimization)
 
 Deno.serve(async (req) => {
   let context = null
@@ -80,22 +81,28 @@ Deno.serve(async (req) => {
       })
     }
 
-    console.log(`[${WORKER_NAME}] Found ${posts.length} posts to classify`)
+    console.log(`[${WORKER_NAME}] Found ${posts.length} posts to classify (batching ${AI_BATCH_SIZE} per AI call)`)
 
-    // Process posts
-    const { processed, failed } = await processBatch(
-      posts,
-      async (post: { id: string; hook: string }) => {
-        try {
-          const result = await classifyHook(post.hook, hookTypesText)
+    // Process posts in batches for AI calls
+    let processed = 0
+    let failed = 0
+
+    for (let i = 0; i < posts.length; i += AI_BATCH_SIZE) {
+      const batch = posts.slice(i, i + AI_BATCH_SIZE)
+      
+      try {
+        // Classify entire batch in one API call
+        const results = await classifyHooksBatch(batch, hookTypesText)
+        
+        // Update each post with its classification
+        for (const result of results) {
+          let hookTypeId: string | null = null
           
           // Try to match by UUID first, then by name
-          let hookTypeId: string | null = null
-          if (hookTypeIds.has(result)) {
-            hookTypeId = result
+          if (hookTypeIds.has(result.hookType)) {
+            hookTypeId = result.hookType
           } else {
-            // Try matching by name (case insensitive)
-            hookTypeId = hookTypeByName.get(result.toLowerCase()) || null
+            hookTypeId = hookTypeByName.get(result.hookType.toLowerCase()) || null
           }
 
           if (hookTypeId) {
@@ -105,30 +112,41 @@ Deno.serve(async (req) => {
                 hook_type_id: hookTypeId,
                 needs_hook_classification: false
               })
-              .eq('id', post.id)
+              .eq('id', result.id)
 
             if (updateError) {
-              console.error(`Failed to update hook classification for ${post.id}:`, updateError)
-              return false
+              console.error(`Failed to update hook classification for ${result.id}:`, updateError)
+              failed++
+            } else {
+              processed++
             }
-            return true
+          } else {
+            console.log(`[${WORKER_NAME}] No match for: "${result.hookType}" (post ${result.id})`)
+            // Mark as processed to avoid infinite retries
+            await context!.supabase
+              .from('viral_posts_bank')
+              .update({ needs_hook_classification: false })
+              .eq('id', result.id)
+            failed++
           }
-          console.log(`[${WORKER_NAME}] No match for result: "${result}"`)
-          return false
-        } catch (err) {
-          console.error(`Error classifying hook for ${post.id}:`, err)
-          return false
         }
-      },
-      { delayMs: 100 }
-    )
+      } catch (err) {
+        console.error(`Error classifying batch:`, err)
+        failed += batch.length
+      }
+
+      // Small delay between batches
+      if (i + AI_BATCH_SIZE < posts.length) {
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+    }
 
     return finalizeWorker(context, {
       success: true,
       itemsFound: posts.length,
       itemsProcessed: processed,
       itemsFailed: failed,
-      message: `Classified ${processed} hooks`
+      message: `Classified ${processed} hooks (${Math.ceil(posts.length / AI_BATCH_SIZE)} API calls)`
     })
 
   } catch (error) {
@@ -136,25 +154,49 @@ Deno.serve(async (req) => {
   }
 })
 
-/**
- * Classify hook type using GPT-5-mini
- * Returns the hook type name (not UUID)
- */
-async function classifyHook(hook: string, hookTypesText: string): Promise<string> {
-  const systemPrompt = `You classify LinkedIn post hooks into categories.
-Return ONLY the category name from the list. Nothing else.`
+interface BatchClassifyResult {
+  id: string
+  hookType: string
+}
 
-  const userMessage = `Hook: "${hook}"
+/**
+ * Classify multiple hooks in a single API call
+ * Returns array of {id, hookType} for each post
+ */
+async function classifyHooksBatch(
+  posts: { id: string; hook: string }[],
+  hookTypesText: string
+): Promise<BatchClassifyResult[]> {
+  const systemPrompt = `You classify LinkedIn post hooks into categories.
+For each hook, return ONLY the category name from the allowed list.
+Return a JSON array with objects containing "id" and "hookType".`
+
+  const hooksFormatted = posts
+    .map((p, i) => `${i + 1}. [ID: ${p.id}] "${p.hook}"`)
+    .join('\n')
+
+  const userMessage = `Classify these ${posts.length} hooks:
+
+${hooksFormatted}
 
 Categories: ${hookTypesText}
 
-Return only the category name.`
+Return JSON array: [{"id": "uuid", "hookType": "category"}, ...]`
 
-  const result = await aiService.classify(
+  const result = await aiService.json<BatchClassifyResult[]>(
     systemPrompt,
     userMessage,
     { functionName: WORKER_NAME }
   )
 
-  return result.trim().toLowerCase().replace(/['"]/g, '')
+  // Ensure we have results for all posts
+  if (!result || !Array.isArray(result)) {
+    throw new Error('Invalid AI response format')
+  }
+
+  // Normalize results
+  return result.map(r => ({
+    id: r.id,
+    hookType: r.hookType.trim().toLowerCase().replace(/['"]/g, '')
+  }))
 }

@@ -70,21 +70,24 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
     // Parse request body for options
-    let maxProfiles = 20
+    let maxProfiles = 5 // Reduced from 20 to prevent timeouts
     let generateEmbeddings = true
     let classifyHooks = true
     let profileIds: string[] | null = null
-    let maxPages = 10 // Default: scrape up to 10 pages
+    let maxPages = 3 // Reduced from 10 to prevent timeouts (3 pages ≈ 60 posts)
     let analyzeStyleAfter = false
+    
+    // Track execution time to avoid edge function timeout (max 60s)
+    const MAX_EXECUTION_MS = 50000 // 50s safety margin before 60s timeout
     
     try {
       const body = await req.json()
       console.log('[sync-profiles] Request body:', JSON.stringify(body))
-      maxProfiles = body.max_profiles || 20
+      maxProfiles = Math.min(body.max_profiles || 5, 10) // Cap at 10 profiles max
       generateEmbeddings = body.generate_embeddings !== false
       classifyHooks = body.classify_hooks !== false
       profileIds = body.profile_ids || null // Specific profiles to scrape
-      maxPages = body.max_pages || 10 // Limit pages to scrape (2 pages = ~100 posts)
+      maxPages = Math.min(body.max_pages || 3, 5) // Cap at 5 pages max (≈100 posts)
       analyzeStyleAfter = body.analyze_style_after === true
     } catch {
       console.log('[sync-profiles] No body or parse error, using defaults')
@@ -165,8 +168,15 @@ serve(async (req) => {
     let totalPostsScraped = 0
     let totalNewPosts = 0
 
-    // Process each profile
+    // Process each profile with timeout check
     for (const profile of profilesToSync) {
+      // Check if we're approaching timeout - abort gracefully
+      const elapsed = Date.now() - startTime
+      if (elapsed > MAX_EXECUTION_MS) {
+        console.log(`[sync-profiles] ⚠️ Approaching timeout (${elapsed}ms), stopping early`)
+        break
+      }
+      
       // Update sync_status to 'scraping'
       await supabase.from('profiles').update({ sync_status: 'scraping' }).eq('id', profile.profile_id)
       

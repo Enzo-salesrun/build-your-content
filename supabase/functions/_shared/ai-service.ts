@@ -1,5 +1,5 @@
 // Unified AI Service with Fallback and Error Tracking
-// Primary: Claude Opus 4.5 | Fallback: GPT-5.2
+// Primary: Claude Opus 4.6 | Fallback: GPT-5.2
 // Import: import { aiService, AIServiceError } from '../_shared/ai-service.ts'
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
@@ -7,7 +7,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 // ============================================
 // CONFIGURATION
 // ============================================
-const CLAUDE_MODEL = 'claude-opus-4-5-20251101'
+const CLAUDE_MODEL = 'claude-opus-4-6'
 const OPENAI_MODEL = 'gpt-5.2'
 const OPENAI_MODEL_LIGHT = 'gpt-5-mini'  // For classifications (~20x cheaper)
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
@@ -19,7 +19,7 @@ const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   'gpt-5.2': { input: 5.00, output: 15.00 },
   'gpt-5-mini': { input: 0.25, output: 2.00 },
   'text-embedding-3-small': { input: 0.02, output: 0 },
-  'claude-opus-4-5-20251101': { input: 15.00, output: 75.00 },
+  'claude-opus-4-6': { input: 5.00, output: 25.00 },
 }
 
 function calculateCost(model: string, inputTokens: number, outputTokens: number) {
@@ -330,7 +330,7 @@ export const aiService = {
     // Try Claude first
     if (claudeKey) {
       try {
-        console.log(`[ai-service] Trying Claude Opus 4.5 for ${functionName}`)
+        console.log(`[ai-service] Trying Claude Opus 4.6 for ${functionName}`)
         const result = await callClaude(
           claudeKey,
           systemPrompt,
@@ -494,7 +494,7 @@ IMPORTANT: Tu DOIS répondre UNIQUEMENT avec un JSON valide, sans aucun texte av
     // Try Claude first
     if (claudeKey) {
       try {
-        console.log(`[ai-service] Trying Claude Opus 4.5 (JSON mode) for ${functionName}`)
+        console.log(`[ai-service] Trying Claude Opus 4.6 (JSON mode) for ${functionName}`)
         const result = await callClaude(
           claudeKey,
           jsonSystemPrompt,

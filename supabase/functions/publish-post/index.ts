@@ -104,9 +104,11 @@ serve(async (req) => {
             try {
               const mediaResponse = await fetch(attachment.url)
               if (mediaResponse.ok) {
-                const blob = await mediaResponse.blob()
-                const filename = attachment.url.split('/').pop() || 'media'
-                formData.append('attachments', blob, filename)
+                const arrayBuffer = await mediaResponse.arrayBuffer()
+                const contentType = mediaResponse.headers.get('content-type') || 'application/octet-stream'
+                const filename = attachment.url.split('/').pop()?.split('?')[0] || 'media'
+                const file = new File([arrayBuffer], filename, { type: contentType })
+                formData.append('attachments', file)
               }
             } catch (mediaError) {
               console.error('Failed to fetch media:', mediaError)
@@ -184,22 +186,7 @@ serve(async (req) => {
           .select('id')
           .single()
 
-        // Trigger auto-engagement from other team accounts (fire and forget)
-        if (postResult.post_id && account.provider === 'LINKEDIN') {
-          fetch(`${supabaseUrl}/functions/v1/auto-engage-post`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Scheduler-Secret': Deno.env.get('SCHEDULER_SECRET') || '',
-            },
-            body: JSON.stringify({
-              published_post_id: publishedPost?.id,
-              external_post_id: postResult.post_id,
-              post_content: content,
-              post_author_profile_id: account.profile_id,
-            }),
-          }).catch(err => console.error('[publish-post] Auto-engage trigger failed:', err))
-        }
+        // Auto-engagement DEPRECATED - disabled due to LinkedIn shadowban risk
 
         // Update scheduled_post_accounts if applicable
         if (scheduled_post_id) {

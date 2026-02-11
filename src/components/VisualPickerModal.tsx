@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Search, Image, Link, Check, Upload, Loader2 } from 'lucide-react'
+import { X, Search, Image, Link, Check, Upload, Loader2, FolderOpen } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -11,6 +11,11 @@ import {
 } from '@/components/ui'
 import { supabase } from '@/lib/supabase'
 
+interface RessourceFolder {
+  id: string
+  name: string
+}
+
 interface Visual {
   id: string
   title: string
@@ -18,6 +23,7 @@ interface Visual {
   file_type: string | null
   tags: string[] | null
   thumbnail_url: string | null
+  folder_id: string | null
 }
 
 interface VisualPickerModalProps {
@@ -31,42 +37,53 @@ const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/web
 
 export function VisualPickerModal({ open, onOpenChange, onSelect, currentUrl }: VisualPickerModalProps) {
   const [visuals, setVisuals] = useState<Visual[]>([])
+  const [folders, setFolders] = useState<RessourceFolder[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedUrl, setSelectedUrl] = useState<string | null>(currentUrl || null)
+  const [selectedFolder, setSelectedFolder] = useState<string>('all')
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (open) {
       fetchVisuals()
+      fetchFolders()
       setSelectedUrl(currentUrl || null)
+      setSelectedFolder('all')
     }
   }, [open, currentUrl])
 
   const fetchVisuals = async () => {
     setLoading(true)
-    // Fetch ressources with images or links
     const { data, error } = await supabase
       .from('ressources')
-      .select('id, title, file_url, file_type, tags, thumbnail_url')
+      .select('id, title, file_url, file_type, tags, thumbnail_url, folder_id')
       .eq('is_active', true)
       .in('file_type', ['image', 'link', 'notion'])
       .not('file_url', 'is', null)
       .order('created_at', { ascending: false })
 
-    console.log('[VisualPickerModal] Fetched visuals:', { data, error })
-    
     if (!error && data) {
       setVisuals(data as Visual[])
     }
     setLoading(false)
   }
 
-  const filteredVisuals = visuals.filter(v =>
-    v.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    v.tags?.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()))
-  )
+  const fetchFolders = async () => {
+    const { data } = await supabase
+      .from('ressource_folders')
+      .select('id, name')
+      .order('name')
+    if (data) setFolders(data)
+  }
+
+  const filteredVisuals = visuals.filter(v => {
+    const matchesSearch = v.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      v.tags?.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()))
+    const matchesFolder = selectedFolder === 'all' || v.folder_id === selectedFolder
+    return matchesSearch && matchesFolder
+  })
 
   const handleConfirm = () => {
     if (selectedUrl) {
@@ -184,6 +201,36 @@ export function VisualPickerModal({ open, onOpenChange, onSelect, currentUrl }: 
           </Button>
         </div>
 
+        {/* Folder filter chips */}
+        {folders.length > 0 && (
+          <div className="flex gap-1.5 flex-wrap">
+            <button
+              onClick={() => setSelectedFolder('all')}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                selectedFolder === 'all'
+                  ? 'bg-violet-100 text-violet-700 border border-violet-200'
+                  : 'bg-neutral-100 text-neutral-600 border border-transparent hover:bg-neutral-200'
+              }`}
+            >
+              Tous
+            </button>
+            {folders.map((folder) => (
+              <button
+                key={folder.id}
+                onClick={() => setSelectedFolder(folder.id)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                  selectedFolder === folder.id
+                    ? 'bg-violet-100 text-violet-700 border border-violet-200'
+                    : 'bg-neutral-100 text-neutral-600 border border-transparent hover:bg-neutral-200'
+                }`}
+              >
+                <FolderOpen className="h-3 w-3" />
+                {folder.name}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Visuals Grid */}
         <div className="flex-1 overflow-y-auto min-h-[300px]">
           {loading ? (
@@ -235,9 +282,14 @@ export function VisualPickerModal({ open, onOpenChange, onSelect, currentUrl }: 
                 >
                   {isImageUrl(visual.file_url) ? (
                     <img
-                      src={visual.file_url}
+                      src={visual.file_url.includes('/storage/v1/object/public/')
+                        ? visual.file_url.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/') + '?width=300&height=200&resize=cover&quality=40'
+                        : visual.file_url
+                      }
                       alt={visual.title}
                       className="w-full h-full object-cover"
+                      loading="lazy"
+                      decoding="async"
                       onError={(e) => {
                         (e.target as HTMLImageElement).style.display = 'none'
                       }}

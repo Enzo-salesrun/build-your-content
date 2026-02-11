@@ -54,6 +54,9 @@ export interface AudienceSlot {
   
   // Mentions
   mentions: PostMention[]
+
+  // First comment (posted as auto-comment under the post, e.g. calendar link)
+  firstComment: string
   
   // Scheduling
   scheduledAt: string | null  // ISO date string for scheduled publication
@@ -122,8 +125,8 @@ export interface PostCreationState {
   defaultMediaTitle: string | null
 }
 
-// Constraints - Limit to 6 posts max to avoid token overflow errors
-export const MAX_POSTS_PER_BATCH = 6
+// Constraints - Limit to 10 posts max (hooks are batched in parallel waves of 2)
+export const MAX_POSTS_PER_BATCH = 10
 export const MAX_AUDIENCES_PER_AUTHOR = 3
 export const MAX_AUTHORS = 6
 
@@ -391,6 +394,10 @@ export function CreatePost() {
                 profile_id: m.linkedinId, // LinkedIn profile ID for Unipile
               }))
             }
+            // Store first comment
+            if (audienceSlot.firstComment && audienceSlot.firstComment.trim()) {
+              updateData.first_comment = audienceSlot.firstComment.trim()
+            }
             // Store media URL based on media mode
             const effectiveMediaUrl = audienceSlot.mediaMode === 'default' 
               ? state.defaultMediaUrl 
@@ -457,6 +464,7 @@ export function CreatePost() {
           selectedHookId: null,
           generatedBody: null,
           finalContent: '',
+          firstComment: '',
         })),
       })),
       detectedConfig: null,

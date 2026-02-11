@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { ChevronLeft, ExternalLink, TrendingUp, FileText, Heart, MessageCircle, Pencil, Download, Sparkles, Loader2 } from 'lucide-react'
+import { ChevronLeft, ExternalLink, TrendingUp, FileText, Heart, MessageCircle, Pencil, Sparkles, Loader2, Clock, RefreshCw } from 'lucide-react'
 import {
   Button,
   Card,
@@ -47,6 +47,7 @@ export function CreatorDetails() {
   const [saving, setSaving] = useState(false)
   const [scraping, setScraping] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
+  const [lastScrapedAt, setLastScrapedAt] = useState<string | null>(null)
 
   // Determine if coming from /team or /creators
   const isTeamMember = location.pathname.startsWith('/team')
@@ -72,12 +73,16 @@ export function CreatorDetails() {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('*')
+        .select(`
+          *,
+          profile_sync_status(last_scraped_at)
+        `)
         .eq('id', id!)
         .single()
 
       if (error) throw error
       setCreator(data)
+      setLastScrapedAt(data.profile_sync_status?.last_scraped_at || null)
       setFormData({
         full_name: data.full_name,
         linkedin_id: data.linkedin_id || '',
@@ -235,19 +240,20 @@ export function CreatorDetails() {
           </Button>
         </div>
         <div className="flex items-center gap-2">
-          {isTeamMember && creator.linkedin_id && (
+          {creator.linkedin_id && (
             <>
               <Button 
                 variant="outline" 
                 onClick={handleScrape}
                 disabled={scraping}
+                className="text-violet-600 border-violet-200 hover:bg-violet-50"
               >
                 {scraping ? (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 ) : (
-                  <Download className="h-4 w-4 mr-2" />
+                  <RefreshCw className="h-4 w-4 mr-2" />
                 )}
-                {scraping ? 'Scraping...' : 'Importer posts'}
+                {scraping ? 'Scraping...' : 'Scraper les posts'}
               </Button>
               <Button 
                 variant="outline" 
@@ -306,6 +312,15 @@ export function CreatorDetails() {
                   <TrendingUp className="h-4 w-4 text-neutral-400" />
                   <span className="font-medium">--</span>
                   <span className="text-neutral-500">avg engagement</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-neutral-400" />
+                  <span className="text-neutral-500">Dernier scraping:</span>
+                  <span className="font-medium">
+                    {lastScrapedAt 
+                      ? new Date(lastScrapedAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })
+                      : 'Jamais'}
+                  </span>
                 </div>
               </div>
             </div>

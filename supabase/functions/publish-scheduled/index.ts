@@ -214,12 +214,14 @@ serve(async (req) => {
             console.log(`[publish-scheduled] Fetching media from media_url: ${prodPost.media_url}`)
             const mediaResponse = await fetch(prodPost.media_url)
             if (mediaResponse.ok) {
-              const blob = await mediaResponse.blob()
-              const filename = prodPost.media_url.split('/').pop() || 'media'
-              formData.append('attachments', blob, filename)
-              console.log(`[publish-scheduled] Successfully added media: ${filename}`)
+              const arrayBuffer = await mediaResponse.arrayBuffer()
+              const contentType = mediaResponse.headers.get('content-type') || 'image/png'
+              const rawFilename = prodPost.media_url.split('/').pop()?.split('?')[0] || 'media'
+              const file = new File([arrayBuffer], rawFilename, { type: contentType })
+              formData.append('attachments', file)
+              console.log(`[publish-scheduled] Media added: ${rawFilename}, type=${contentType}, size=${arrayBuffer.byteLength} bytes`)
             } else {
-              console.error(`[publish-scheduled] Failed to fetch media_url: ${mediaResponse.status}`)
+              console.error(`[publish-scheduled] Failed to fetch media_url: ${mediaResponse.status} ${mediaResponse.statusText}`)
             }
           } catch (mediaError) {
             console.error('[publish-scheduled] Failed to fetch media_url:', mediaError)
@@ -231,9 +233,11 @@ serve(async (req) => {
           try {
             const mediaResponse = await fetch(attachment.url)
             if (mediaResponse.ok) {
-              const blob = await mediaResponse.blob()
-              const filename = attachment.url.split('/').pop() || 'media'
-              formData.append('attachments', blob, filename)
+              const arrayBuffer = await mediaResponse.arrayBuffer()
+              const contentType = mediaResponse.headers.get('content-type') || 'application/octet-stream'
+              const filename = attachment.url.split('/').pop()?.split('?')[0] || 'media'
+              const file = new File([arrayBuffer], filename, { type: contentType })
+              formData.append('attachments', file)
             }
           } catch (mediaError) {
             console.error('Failed to fetch media from attachments:', mediaError)
@@ -301,22 +305,7 @@ serve(async (req) => {
 
         console.log(`Published production_post ${prodPost.id}`)
 
-        // Trigger auto-engagement from other team accounts (fire and forget)
-        if (postResult.post_id) {
-          fetch(`${supabaseUrl}/functions/v1/auto-engage-post`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Scheduler-Secret': schedulerSecret,
-            },
-            body: JSON.stringify({
-              published_post_id: publishedPost?.id,
-              external_post_id: postResult.post_id,
-              post_content: prodPost.final_content,
-              post_author_profile_id: prodPost.author_id,
-            }),
-          }).catch(err => console.error('[publish-scheduled] Auto-engage trigger failed:', err))
-        }
+        // Auto-engagement DEPRECATED - disabled due to LinkedIn shadowban risk
 
         // ==========================================
         // AUTO-POST TO COMPANY PAGES
@@ -398,14 +387,30 @@ serve(async (req) => {
                 companyFormData.append('text', companyContent)
                 companyFormData.append('as_organization', companyPage.organization_urn)
 
-                // Add media attachments to company post
+                // Add media attachments to company post (media_url + legacy)
+                if (prodPost.media_url) {
+                  try {
+                    const mediaResponse = await fetch(prodPost.media_url)
+                    if (mediaResponse.ok) {
+                      const arrayBuffer = await mediaResponse.arrayBuffer()
+                      const contentType = mediaResponse.headers.get('content-type') || 'image/png'
+                      const rawFilename = prodPost.media_url.split('/').pop()?.split('?')[0] || 'media'
+                      const file = new File([arrayBuffer], rawFilename, { type: contentType })
+                      companyFormData.append('attachments', file)
+                    }
+                  } catch (mediaError) {
+                    console.error('Failed to fetch media_url for company post:', mediaError)
+                  }
+                }
                 for (const attachment of postAttachments) {
                   try {
                     const mediaResponse = await fetch(attachment.url)
                     if (mediaResponse.ok) {
-                      const blob = await mediaResponse.blob()
-                      const filename = attachment.url.split('/').pop() || 'media'
-                      companyFormData.append('attachments', blob, filename)
+                      const arrayBuffer = await mediaResponse.arrayBuffer()
+                      const contentType = mediaResponse.headers.get('content-type') || 'application/octet-stream'
+                      const filename = attachment.url.split('/').pop()?.split('?')[0] || 'media'
+                      const file = new File([arrayBuffer], filename, { type: contentType })
+                      companyFormData.append('attachments', file)
                     }
                   } catch (mediaError) {
                     console.error('Failed to fetch media for company post:', mediaError)
@@ -498,7 +503,8 @@ serve(async (req) => {
         content,
         original_post_id,
         production_posts!original_post_id (
-          attachments
+          attachments,
+          media_url
         ),
         company_pages!inner (
           id,
@@ -563,15 +569,31 @@ serve(async (req) => {
         companyFormData.append('as_organization', companyPage.organization_urn)
 
         // Get media attachments from original production_post
-        const originalPost = pendingPost.production_posts as { attachments: Array<{ url: string; type?: string }> } | null
+        const originalPost = pendingPost.production_posts as { attachments: Array<{ url: string; type?: string }>; media_url?: string } | null
         const pendingAttachments = originalPost?.attachments || []
+        if (originalPost?.media_url) {
+          try {
+            const mediaResponse = await fetch(originalPost.media_url)
+            if (mediaResponse.ok) {
+              const arrayBuffer = await mediaResponse.arrayBuffer()
+              const contentType = mediaResponse.headers.get('content-type') || 'image/png'
+              const rawFilename = originalPost.media_url.split('/').pop()?.split('?')[0] || 'media'
+              const file = new File([arrayBuffer], rawFilename, { type: contentType })
+              companyFormData.append('attachments', file)
+            }
+          } catch (mediaError) {
+            console.error('Failed to fetch media_url for delayed company post:', mediaError)
+          }
+        }
         for (const attachment of pendingAttachments) {
           try {
             const mediaResponse = await fetch(attachment.url)
             if (mediaResponse.ok) {
-              const blob = await mediaResponse.blob()
-              const filename = attachment.url.split('/').pop() || 'media'
-              companyFormData.append('attachments', blob, filename)
+              const arrayBuffer = await mediaResponse.arrayBuffer()
+              const contentType = mediaResponse.headers.get('content-type') || 'application/octet-stream'
+              const filename = attachment.url.split('/').pop()?.split('?')[0] || 'media'
+              const file = new File([arrayBuffer], filename, { type: contentType })
+              companyFormData.append('attachments', file)
             }
           } catch (mediaError) {
             console.error('Failed to fetch media for delayed company post:', mediaError)

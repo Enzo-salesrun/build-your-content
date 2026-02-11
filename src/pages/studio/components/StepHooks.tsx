@@ -134,25 +134,43 @@ export function StepHooks({ state, updateState, setAiStatus, setAiMessage }: Ste
         })
       })
 
-      setGenerationPhase(`Génération batch de ${combinations.length} combinaison(s)...`)
-      setAiMessage(`Génération de ${combinations.length * 15} hooks uniques...`)
+      const CHUNK_SIZE = 2
+      const totalHooks = combinations.length * 15
+      const chunks: typeof combinations[] = []
+      for (let i = 0; i < combinations.length; i += CHUNK_SIZE) {
+        chunks.push(combinations.slice(i, i + CHUNK_SIZE))
+      }
 
-      // ONE single API call for all combinations
-      const { data, error } = await supabase.functions.invoke('generate-hooks-batch', {
-        body: {
-          source_text: state.sourceText,
-          source_type: state.sourceType, // 'idea' or 'written_post' - AI adapts prompt accordingly
-          combinations,
-          feedback: feedback || undefined,
-        },
-      })
+      setGenerationPhase(`Génération de ${totalHooks} hooks en ${chunks.length} vague(s)...`)
+      setAiMessage(`Génération de ${totalHooks} hooks uniques (${chunks.length} vague(s) en parallèle)...`)
 
-      if (error) throw error
+      // Call all chunks in parallel
+      const chunkPromises = chunks.map((chunk, idx) =>
+        supabase.functions.invoke('generate-hooks-batch', {
+          body: {
+            source_text: state.sourceText,
+            source_type: state.sourceType,
+            combinations: chunk,
+            feedback: feedback || undefined,
+          },
+        }).then(({ data, error }) => {
+          if (error) throw error
+          setGenerationPhase(`Vague ${idx + 1}/${chunks.length} terminée`)
+          return data.results || {}
+        })
+      )
 
-      setGenerationPhase('Tri par pertinence...')
+      const chunkResults = await Promise.all(chunkPromises)
 
-      // Parse batch results - keys are "authorId::audienceId"
-      const batchResults = data.results || {}
+      setGenerationPhase('Consolidation des résultats...')
+
+      // Merge all chunk results into a single map
+      const batchResults: Record<string, any[]> = {}
+      for (const result of chunkResults) {
+        for (const [key, hooks] of Object.entries(result)) {
+          batchResults[key] = hooks as any[]
+        }
+      }
 
       // Update state with results
       const updatedAuthors = state.authors.map(author => ({

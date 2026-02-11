@@ -87,8 +87,8 @@ Deno.serve(async (req) => {
       )
     }
 
-    if (combinations.length > 8) {
-      throw new Error('Maximum 8 combinations allowed per batch')
+    if (combinations.length > 3) {
+      throw new Error('Maximum 3 combinations allowed per batch')
     }
 
     // Fetch hook types for classification
