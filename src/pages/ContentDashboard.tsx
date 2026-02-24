@@ -395,19 +395,11 @@ export function ContentDashboard() {
       }
 
       // Call publish-company-post edge function
-      const { data: session } = await supabase.auth.getSession()
-      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/publish-company-post`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.session?.access_token}`,
-        },
-        body: JSON.stringify({
-          company_post_id: postId,
-        }),
+      const { data: result, error: fnError } = await supabase.functions.invoke('publish-company-post', {
+        body: { company_post_id: postId },
       })
 
-      const result = await response.json()
+      if (fnError) throw fnError
       if (!result.success) throw new Error(result.error || 'Publication échouée')
 
       await fetchData()

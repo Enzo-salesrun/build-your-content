@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { PenTool, Eye, Sparkles, Users, RefreshCw, Check, Loader2, ChevronLeft, ChevronRight, Plus, Image, Calendar, X, Ban, AtSign } from 'lucide-react'
+import { PenTool, Eye, Sparkles, Users, RefreshCw, Check, Loader2, ChevronLeft, ChevronRight, Plus, Image, Video, Calendar, X, Ban, AtSign } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button, Textarea, ScrollArea, Badge, MultimodalInput } from '@/components/ui'
 import type { PostCreationState } from '../CreatePost'
@@ -395,11 +395,12 @@ export function StepEditor({ state, updateState, setAiStatus, setAiMessage }: St
             return { ...slot, mediaMode: mode, mediaUrl: null, mediaType: null }
           }
           // custom mode - use provided URL or keep existing
+          const isVideo = customUrl ? /\.(mp4|webm|mov)$/i.test(customUrl) : false
           return { 
             ...slot, 
             mediaMode: mode, 
             mediaUrl: customUrl ?? slot.mediaUrl,
-            mediaType: customUrl ? 'image' as const : slot.mediaType,
+            mediaType: customUrl ? (isVideo ? 'video' as const : 'image' as const) : slot.mediaType,
           }
         }),
       }
@@ -1083,12 +1084,18 @@ export function StepEditor({ state, updateState, setAiStatus, setAiMessage }: St
                             <span className="text-xs font-medium text-neutral-700">Personnalisé</span>
                             {activeSlot.slot.mediaMode === 'custom' && activeSlot.slot.mediaUrl ? (
                               <div className="flex items-center gap-2 mt-1">
-                                <img 
-                                  src={activeSlot.slot.mediaUrl} 
-                                  alt="" 
-                                  className="w-8 h-6 object-cover rounded"
-                                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                                />
+                                {activeSlot.slot.mediaType === 'video' ? (
+                                  <div className="w-8 h-6 rounded bg-purple-100 flex items-center justify-center">
+                                    <Video className="h-3.5 w-3.5 text-purple-500" />
+                                  </div>
+                                ) : (
+                                  <img 
+                                    src={activeSlot.slot.mediaUrl} 
+                                    alt="" 
+                                    className="w-8 h-6 object-cover rounded"
+                                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                                  />
+                                )}
                                 <button
                                   onClick={() => setIsVisualModalOpen(true)}
                                   className="text-[10px] text-violet-600 hover:text-violet-700"
@@ -1187,6 +1194,22 @@ export function StepEditor({ state, updateState, setAiStatus, setAiMessage }: St
                           )
                         })()}
                       </div>
+
+                      {/* Media preview */}
+                      {(() => {
+                        const mediaUrl = activeSlot.slot.mediaMode === 'custom' ? activeSlot.slot.mediaUrl : (activeSlot.slot.mediaMode === 'default' ? state.defaultMediaUrl : null)
+                        const mediaType = activeSlot.slot.mediaMode === 'custom' ? activeSlot.slot.mediaType : (mediaUrl ? 'image' : null)
+                        if (!mediaUrl) return null
+                        return mediaType === 'video' ? (
+                          <div className="mt-3 rounded-lg overflow-hidden border border-neutral-200">
+                            <video src={mediaUrl} controls className="w-full max-h-[200px]" preload="metadata" />
+                          </div>
+                        ) : (
+                          <div className="mt-3 rounded-lg overflow-hidden border border-neutral-200">
+                            <img src={mediaUrl} alt="" className="w-full max-h-[200px] object-cover" />
+                          </div>
+                        )
+                      })()}
 
                       <div className="mt-4 pt-3 border-t border-neutral-100 flex justify-around text-neutral-400 text-xs">
                         <span>👍 J'aime</span>

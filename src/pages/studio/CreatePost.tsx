@@ -49,7 +49,7 @@ export interface AudienceSlot {
   
   // Media attachment
   mediaUrl: string | null
-  mediaType: 'image' | 'link' | null
+  mediaType: 'image' | 'video' | 'link' | null
   mediaMode: 'default' | 'custom' | 'none'  // How media is selected
   
   // Mentions
@@ -406,7 +406,7 @@ export function CreatePost() {
                 : null
             if (effectiveMediaUrl) {
               updateData.media_url = effectiveMediaUrl
-              updateData.media_type = 'image'
+              updateData.media_type = audienceSlot.mediaType || 'image'
             } else {
               updateData.media_url = null
               updateData.media_type = null

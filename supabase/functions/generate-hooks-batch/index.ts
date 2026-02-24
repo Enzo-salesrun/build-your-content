@@ -87,8 +87,8 @@ Deno.serve(async (req) => {
       )
     }
 
-    if (combinations.length > 3) {
-      throw new Error('Maximum 3 combinations allowed per batch')
+    if (combinations.length > 10) {
+      throw new Error('Maximum 10 combinations allowed per batch')
     }
 
     // Fetch hook types for classification
@@ -127,38 +127,31 @@ Deno.serve(async (req) => {
     const knowledgeMap = new Map((knowledgeRes.data || []).map((k: any) => [k.id, k]))
     const inspirationMap = new Map((inspirationRes.data || []).map((p: any) => [p.id, p]))
 
-    // Build audience contexts for each combination - ENRICHED
-    const combinationsContext = combinations.map((combo, index) => {
-      const aud = combo.audience
-      const audienceName = aud.label_fr || aud.name
-      
-      // Get topics for this author
-      const topicNames = combo.topic_ids
-        .map(id => topicsMap.get(id))
-        .filter(Boolean)
-        .map((t: any) => t.label_fr || t.name)
-        .join(', ')
-      
-      // Get preset config
-      const preset = combo.preset_id ? presetsMap.get(combo.preset_id) : null
-      const presetInfo = preset ? `Preset "${preset.name}" (${preset.type}): ${JSON.stringify(preset.config)}` : ''
-      
-      // Get knowledge context (first 500 chars each)
-      const knowledgeContext = combo.knowledge_ids
-        .map(id => knowledgeMap.get(id))
-        .filter(Boolean)
-        .map((k: any) => `[${k.title}]: ${(k.content || '').substring(0, 500)}...`)
-        .join('\n')
-      
-      // Get inspiration styles
-      const inspirationStyles = combo.inspiration_profile_ids
-        .map(id => inspirationMap.get(id))
-        .filter(Boolean)
-        .map((p: any) => p.writing_style_prompt)
-        .filter(Boolean)
-        .join('\n---\n')
+    // Helper: build context string for a subset of combinations
+    const buildContextForChunk = (chunk: CombinationInput[]) => {
+      const combinationsContext = chunk.map((combo, index) => {
+        const aud = combo.audience
+        const audienceName = aud.label_fr || aud.name
+        const topicNames = combo.topic_ids
+          .map(id => topicsMap.get(id))
+          .filter(Boolean)
+          .map((t: any) => t.label_fr || t.name)
+          .join(', ')
+        const preset = combo.preset_id ? presetsMap.get(combo.preset_id) : null
+        const presetInfo = preset ? `Preset "${preset.name}" (${preset.type}): ${JSON.stringify(preset.config)}` : ''
+        const knowledgeContext = combo.knowledge_ids
+          .map(id => knowledgeMap.get(id))
+          .filter(Boolean)
+          .map((k: any) => `[${k.title}]: ${(k.content || '').substring(0, 500)}...`)
+          .join('\n')
+        const inspirationStyles = combo.inspiration_profile_ids
+          .map(id => inspirationMap.get(id))
+          .filter(Boolean)
+          .map((p: any) => p.writing_style_prompt)
+          .filter(Boolean)
+          .join('\n---\n')
 
-      return `
+        return `
 === COMBINAISON ${index + 1}: "${combo.author_name}" → "${audienceName}" ===
 Clé: "${combo.author_id}::${aud.id}"
 Langue: ${combo.language === 'fr' ? 'Français' : 'Anglais'}
@@ -179,35 +172,61 @@ AUDIENCE CIBLE: "${audienceName}"
 - Ton: ${aud.tone_preferences || 'Non spécifié'}
 ${combo.slot_feedback ? `\n⚠️ INSTRUCTIONS SPÉCIFIQUES POUR CETTE COMBINAISON:\n${combo.slot_feedback}` : ''}
 `
-    }).join('\n')
+      }).join('\n')
 
-    // Build the keys for output structure
-    const outputStructure = combinations.map(combo => 
-      `"${combo.author_id}::${combo.audience.id}": [15 hooks pour ${combo.author_name} → ${combo.audience.label_fr || combo.audience.name}]`
-    ).join(',\n    ')
+      const outputStructure = chunk.map(combo => 
+        `"${combo.author_id}::${combo.audience.id}": [15 hooks pour ${combo.author_name} → ${combo.audience.label_fr || combo.audience.name}]`
+      ).join(',\n    ')
 
-    // Build prompts from external files
-    const systemPrompt = buildHooksSystemPrompt({
-      combinationsContext,
-      hookTypesRef,
-      feedback,
-      outputStructure,
+      return { combinationsContext, outputStructure }
+    }
+
+    // Split combinations into chunks of 2 to avoid WORKER_LIMIT
+    const CHUNK_SIZE = 2
+    const chunks: CombinationInput[][] = []
+    for (let i = 0; i < combinations.length; i += CHUNK_SIZE) {
+      chunks.push(combinations.slice(i, i + CHUNK_SIZE))
+    }
+
+    console.log(`[generate-hooks-batch] Processing ${combinations.length} combinations in ${chunks.length} parallel chunk(s)`)
+
+    // Process all chunks in PARALLEL to avoid 504 timeout
+    const chunkPromises = chunks.map((chunk, ci) => {
+      const { combinationsContext, outputStructure } = buildContextForChunk(chunk)
+
+      const systemPrompt = buildHooksSystemPrompt({
+        combinationsContext,
+        hookTypesRef,
+        feedback,
+        outputStructure,
+      })
+      const userMessage = buildHooksUserMessage(source_text)
+
+      console.log(`[generate-hooks-batch] Chunk ${ci + 1}/${chunks.length}: ${chunk.length} combination(s) starting...`)
+      
+      return aiService.json<BatchResult>(
+        systemPrompt,
+        userMessage,
+        {
+          functionName: 'generate-hooks-batch',
+          maxTokens: 8000,
+        }
+      ).then(aiResult => {
+        console.log(`[generate-hooks-batch] Chunk ${ci + 1} done using ${aiResult.model}, keys:`, Object.keys(aiResult.data))
+        return aiResult.data
+      })
     })
-    const userMessage = buildHooksUserMessage(source_text)
 
-    console.log('[generate-hooks-batch] Calling AI Service (Claude with GPT fallback)...')
-    
-    const aiResult = await aiService.json<BatchResult>(
-      systemPrompt,
-      userMessage,
-      {
-        functionName: 'generate-hooks-batch',
-        maxTokens: 16000,
+    const chunkResults = await Promise.all(chunkPromises)
+
+    // Merge all chunk results
+    const result: BatchResult = {}
+    for (const chunkData of chunkResults) {
+      for (const [key, hooks] of Object.entries(chunkData)) {
+        result[key] = hooks
       }
-    )
-    
-    const result = aiResult.data
-    console.log(`[generate-hooks-batch] Generation complete using ${aiResult.model}, fallback: ${aiResult.fallbackUsed}, keys:`, Object.keys(result))
+    }
+    console.log(`[generate-hooks-batch] All ${chunks.length} chunks complete, total keys:`, Object.keys(result))
 
     return new Response(
       JSON.stringify({ results: result }),

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Search, Image, Link, Check, Upload, Loader2, FolderOpen } from 'lucide-react'
+import { X, Search, Image, Link, Check, Upload, Loader2, FolderOpen, Play } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -33,7 +33,10 @@ interface VisualPickerModalProps {
   currentUrl?: string | null
 }
 
-const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml']
+const ACCEPTED_MEDIA_TYPES = [
+  'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
+  'video/mp4', 'video/webm', 'video/quicktime',
+]
 
 export function VisualPickerModal({ open, onOpenChange, onSelect, currentUrl }: VisualPickerModalProps) {
   const [visuals, setVisuals] = useState<Visual[]>([])
@@ -60,7 +63,7 @@ export function VisualPickerModal({ open, onOpenChange, onSelect, currentUrl }: 
       .from('ressources')
       .select('id, title, file_url, file_type, tags, thumbnail_url, folder_id')
       .eq('is_active', true)
-      .in('file_type', ['image', 'link', 'notion'])
+      .in('file_type', ['image', 'video', 'link', 'notion'])
       .not('file_url', 'is', null)
       .order('created_at', { ascending: false })
 
@@ -99,20 +102,27 @@ export function VisualPickerModal({ open, onOpenChange, onSelect, currentUrl }: 
     return /\.(jpg|jpeg|png|gif|webp|svg|bmp)$/i.test(url)
   }
 
+  const isVideoUrl = (url: string) => {
+    return /\.(mp4|webm|mov)$/i.test(url)
+  }
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (!files || files.length === 0) return
 
     const file = files[0]
-    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-      alert('Format non supporté. Utilisez JPG, PNG, GIF, WebP ou SVG.')
+    if (!ACCEPTED_MEDIA_TYPES.includes(file.type)) {
+      alert('Format non supporté. Utilisez JPG, PNG, GIF, WebP, SVG, MP4, WebM ou MOV.')
       return
     }
+
+    const isVideo = file.type.startsWith('video/')
 
     setUploading(true)
     try {
       const fileName = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`
-      const filePath = `image/${fileName}`
+      const fileTypeFolder = isVideo ? 'video' : 'image'
+      const filePath = `${fileTypeFolder}/${fileName}`
 
       const { error: uploadError } = await supabase.storage
         .from('ressources')
@@ -130,11 +140,11 @@ export function VisualPickerModal({ open, onOpenChange, onSelect, currentUrl }: 
         .insert({
           title: file.name.replace(/\.[^/.]+$/, ''),
           file_url: publicUrl,
-          file_type: 'image',
+          file_type: isVideo ? 'video' : 'image',
           mime_type: file.type,
           file_size: file.size,
           original_filename: file.name,
-          tags: ['image', 'import'],
+          tags: [isVideo ? 'video' : 'image', 'import'],
           is_active: true,
         })
         .select('id, title, file_url, file_type, tags, thumbnail_url')
@@ -182,7 +192,7 @@ export function VisualPickerModal({ open, onOpenChange, onSelect, currentUrl }: 
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml"
+            accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml,video/mp4,video/webm,video/quicktime"
             onChange={handleFileUpload}
             className="hidden"
           />
@@ -280,7 +290,13 @@ export function VisualPickerModal({ open, onOpenChange, onSelect, currentUrl }: 
                       : 'border-neutral-200 hover:border-neutral-300'
                   }`}
                 >
-                  {isImageUrl(visual.file_url) ? (
+                  {isVideoUrl(visual.file_url) || visual.file_type === 'video' ? (
+                    <div className="w-full h-full bg-gradient-to-br from-purple-100 to-violet-50 flex items-center justify-center relative">
+                      <div className="w-12 h-12 rounded-full bg-violet-500/80 flex items-center justify-center">
+                        <Play className="h-6 w-6 text-white ml-0.5" />
+                      </div>
+                    </div>
+                  ) : isImageUrl(visual.file_url) ? (
                     <img
                       src={visual.file_url.includes('/storage/v1/object/public/')
                         ? visual.file_url.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/') + '?width=300&height=200&resize=cover&quality=40'
